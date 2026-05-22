@@ -81,7 +81,7 @@ def check_bullish_divergence(df, rsi):
     return False
 
 def screen_crypto():
-    print("🚀 Starting Binance Thailand Crypto Screener [Engine: Yahoo Finance Global-to-THB]...")
+    print("🚀 Starting Thailand Crypto Screener [Engine: Yahoo Finance Global-to-THB]...")
     
     # ดึงค่าเงินบาทปัจจุบัน
     thb_rate = get_realtime_thb_rate()
