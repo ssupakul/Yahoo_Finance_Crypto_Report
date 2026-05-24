@@ -1,4 +1,4 @@
-name: Thailand Crypto Screener
+name: Yahoo Finance Crypto Screener
 
 on:
   schedule:
