@@ -7,33 +7,39 @@ import yfinance as yf
 # -------------------------------------------------------------------------
 # SETUP & CONFIGURATION
 # -------------------------------------------------------------------------
-LINE_PUSH_URL = "https://api.line.me/v2/bot/message/push"
-LINE_CHANNEL_ACCESS_TOKEN = os.getenv("LINE_CHANNEL_ACCESS_TOKEN")
-LINE_USER_ID = os.getenv("LINE_USER_ID")
+# เปลี่ยนคอนฟิกมาใช้ Telegram
+TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
+TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 
 WATCHLIST = ["BTC-USD", "ETH-USD", "BNB-USD", "SOL-USD", "XRP-USD", "EIGEN-USD", "FLOKI-USD", "NEAR-USD", "OP-USD", "ADA-USD", "SHIB-USD", "DOGE-USD"]
 
-def send_line_messaging_api(text_msg):
-    if not LINE_CHANNEL_ACCESS_TOKEN or not LINE_USER_ID:
-        print("Error: Missing LINE_CHANNEL_ACCESS_TOKEN or LINE_USER_ID.")
+def send_telegram_message(text_msg):
+    """ ฟังก์ชันส่งข้อความไปยัง Telegram รองรับ MarkdownV2 เพื่อความสวยงาม """
+    if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
+        print("Error: Missing TELEGRAM_BOT_TOKEN or TELEGRAM_CHAT_ID.")
         return
 
-    headers = {
-        "Content-Type": "application/json",
-        "Authorization": f"Bearer {LINE_CHANNEL_ACCESS_TOKEN}"
-    }
+    url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
+    
+    # ทำการ Escape ตัวอักษรพิเศษบางตัวสำหรับ MarkdownV2 ของ Telegram เพื่อไม่ให้ส่งพลาด
+    escape_chars = ['_', '*', '[', ']', '(', ')', '~', '`', '>', '#', '+', '-', '=', '|', '{', '}', '.', '!']
+    escaped_msg = text_msg
+    # หมายเหตุ: ในโค้ดข้อความด้านล่างเราจะจัดฟอร์แมตแบบปกติ และเปิดใช้ HTML mode แทนเพื่อความง่ายและเสถียรในการแสดงผล
+    
     payload = {
-        "to": LINE_USER_ID,
-        "messages": [{"type": "text", "text": text_msg}]
+        "chat_id": TELEGRAM_CHAT_ID,
+        "text": text_msg,
+        "parse_mode": "HTML"  # ใช้ HTML เพื่อจัดตัวหนา <b> และเว้นบรรทัดได้ง่าย
     }
+    
     try:
-        response = requests.post(LINE_PUSH_URL, headers=headers, json=payload, timeout=10)
+        response = requests.post(url, json=payload, timeout=10)
         if response.status_code == 200:
-            print("Successfully sent message via LINE Messaging API.")
+            print("Successfully sent message via Telegram Bot.")
         else:
-            print(f"Failed to send LINE message: {response.status_code} - {response.text}")
+            print(f"Failed to send Telegram message: {response.status_code} - {response.text}")
     except Exception as e:
-        print(f"Exception while sending LINE message: {e}")
+        print(f"Exception while sending Telegram message: {e}")
 
 def get_historical_data_yf(symbol, interval="1h"):
     try:
@@ -41,7 +47,6 @@ def get_historical_data_yf(symbol, interval="1h"):
         df = ticker.history(period="60d", interval=interval)
         if df.empty:
             return None
-        # ใช้ .copy() ป้องกัน SettingWithCopyWarning
         df = df.reset_index().copy()
         df.rename(columns={"Open": "open", "High": "high", "Low": "low", "Close": "close", "Volume": "volume"}, inplace=True)
         return df
@@ -50,44 +55,29 @@ def get_historical_data_yf(symbol, interval="1h"):
         return None
 
 def check_bullish_divergence(df):
-    """ ตรวจสอบ Bullish Divergence โดยเทียบราคาต่ำสุดกับ RSI ณ แท่งเดียวกัน """
     if len(df) < 20:
         return False
-        
     current_close = df["close"].iloc[-1]
     current_rsi = df["RSI"].iloc[-1]
-    
-    # มองหาย้อนกลับไปในอดีต (แท่งที่ -15 ถึง -3)
     lookback_df = df.iloc[-15:-3]
-    
-    # หาตำแหน่ง (Index) ของราคาที่ต่ำที่สุดในช่วงนั้น
     lowest_price_idx = lookback_df["close"].idxmin()
-    
     older_close = df["close"].loc[lowest_price_idx]
-    older_rsi = df["RSI"].loc[lowest_price_idx] # ดึงค่า RSI จากแท่งเทียนเดียวกับที่ราคาต่ำสุด
+    older_rsi = df["RSI"].loc[lowest_price_idx]
     
-    # ราคาทำ New Low แต่ RSI ยก Low สูงขึ้น และ RSI ปัจจุบันยังไม่หลุดโซนตึงตัวมากเกินไป
     if current_close < older_close and current_rsi > older_rsi and current_rsi < 45:
         return True
     return False
 
 def check_bearish_divergence(df):
-    """ ตรวจสอบ Bearish Divergence โดยเทียบราคาสูงสุดกับ RSI ณ แท่งเดียวกัน """
     if len(df) < 20:
         return False
-        
     current_close = df["close"].iloc[-1]
     current_rsi = df["RSI"].iloc[-1]
-    
     lookback_df = df.iloc[-15:-3]
-    
-    # หาตำแหน่ง (Index) ของราคาที่สูงที่สุดในช่วงนั้น
     highest_price_idx = lookback_df["close"].idxmax()
-    
     older_close = df["close"].loc[highest_price_idx]
-    older_rsi = df["RSI"].loc[highest_price_idx] # ดึงค่า RSI จากแท่งเทียนเดียวกับที่ราคาสูงสุด
+    older_rsi = df["RSI"].loc[highest_price_idx]
     
-    # ราคาทำ New High แต่ RSI กลับลดลง
     if current_close > older_close and current_rsi < older_rsi and current_rsi > 55:
         return True
     return False
@@ -96,6 +86,9 @@ def screen_crypto():
     print("🚀 Starting Crypto Screener [Engine: Yahoo Finance USD]...")
     
     signals = []
+    coin_summaries = []
+    bullish_count = 0
+    total_coins = 0
     
     for symbol in WATCHLIST:
         display_name = symbol.replace("-USD", "_USD")
@@ -109,7 +102,6 @@ def screen_crypto():
         df["EMA_200"] = ta.ema(df["close"], length=200)
         df["RSI"] = ta.rsi(df["close"], length=14)
         
-        # คัดกรองข้อมูลแถวล่าสุด และแถวก่อนหน้า (เช็คการตัดเข้าโซน)
         if len(df) < 2:
             continue
             
@@ -119,15 +111,30 @@ def screen_crypto():
         last_close_usd = last_row["close"]
         last_rsi = last_row["RSI"]
         prev_rsi = prev_row["RSI"]
-        
         last_ema50_usd = last_row["EMA_50"]
         last_ema200_usd = last_row["EMA_200"]
         
-        # 🟢 เงื่อนไขเข้าซื้อ: เพิ่งตัดลงมาต่ำกว่าหรือเท่ากับ 32 ในแท่งนี้
+        # -------------------------------------------------------------------------
+        # 1. วิเคราะห์แนวโน้มรายเหรียญ (สรุปของแต่ละเหรียญ)
+        # -------------------------------------------------------------------------
+        total_coins += 1
+        # เกณฑ์ชี้วัด: ถ้าราคา > EMA200 ถือว่าเป็นแนวโน้มขาขึ้นในภาพรวม
+        if last_close_usd > last_ema200_usd:
+            coin_trend = "🟢 ขาขึ้น (Above EMA200)"
+            bullish_count += 1
+        else:
+            coin_trend = "🔴 ขาลง (Below EMA200)"
+            
+        coin_summaries.append(f"• <b>{display_name}</b>: ${last_close_usd:,.4f} | RSI: {last_rsi:.1f}\n  👉 แนวโน้ม: {coin_trend}")
+        
+        # -------------------------------------------------------------------------
+        # 2. คัดกรองสัญญาณเทรด (RSI Signals)
+        # -------------------------------------------------------------------------
+        # 🟢 เงื่อนไขเข้าซื้อ
         if last_rsi <= 35 and prev_rsi > 35:
             is_bull_div = check_bullish_divergence(df)
             buy_zone = f"{last_close_usd:,.4f} - {(last_close_usd * 0.98):,.4f}"
-            take_profit = f"{(last_close_usd * 1.05):,.4f} (หรือแนวต้าน EMA50: {last_ema50_usd:,.4f})"
+            take_profit = f"{(last_close_usd * 1.05):,.4f} (หรือ EMA50: {last_ema50_usd:,.4f})"
             stop_loss = f"{(last_close_usd * 0.95):,.4f}"
             
             status_context = "📉 RSI Oversold"
@@ -140,7 +147,7 @@ def screen_crypto():
                 status_context += "\n🔥 พบบูลลิชไดเวอร์เจนท์ (Bullish Divergence) มีโอกาสกลับตัวสูง!"
                 
             msg = (
-                f"\n🟢 [SIGNAL BUY] {display_name}\n"
+                f"\n🟢 <b>[SIGNAL BUY] {display_name}</b>\n"
                 f"ราคาปัจจุบัน: {last_close_usd:,.4f} USD\n"
                 f"RSI (1h): {last_rsi:.2f}\n"
                 f"สถานะกราฟ: {status_context}\n"
@@ -151,11 +158,11 @@ def screen_crypto():
             )
             signals.append(msg)
             
-        # 🔴 เงื่อนไขเตือนขาย: เพิ่งตัดขึ้นไปสูงกว่าหรือเท่ากับ 70 ในแท่งนี้
+        # 🔴 เงื่อนไขเตือนขาย
         elif last_rsi >= 65 and prev_rsi < 65:
             is_bear_div = check_bearish_divergence(df)
             sell_zone = f"{last_close_usd:,.4f} - {(last_close_usd * 1.02):,.4f}"
-            re_entry_zone = f"{(last_close_usd * 0.95):,.4f} (หรือแนวรับ EMA50: {last_ema50_usd:,.4f})"
+            re_entry_zone = f"{(last_close_usd * 0.95):,.4f} (หรือ EMA50: {last_ema50_usd:,.4f})"
             trailing_stop = f"{(last_close_usd * 0.97):,.4f}"
             
             status_context = "⚠️ RSI Overbought (ซื้อมากเกินไป)"
@@ -168,7 +175,7 @@ def screen_crypto():
                 status_context += "\n🚨 พบแบร์ริชไดเวอร์เจนท์ (Bearish Divergence) สัญญาณกลับตัวลงรุนแรง!"
                 
             msg = (
-                f"\n🔴 [SIGNAL SELL] {display_name}\n"
+                f"\n🔴 <b>[SIGNAL SELL] {display_name}</b>\n"
                 f"ราคาปัจจุบัน: {last_close_usd:,.4f} USD\n"
                 f"RSI (1h): {last_rsi:.2f}\n"
                 f"สถานะกราฟ: {status_context}\n"
@@ -179,13 +186,42 @@ def screen_crypto():
             )
             signals.append(msg)
 
-    if signals:
-        alert_header = "📊 [Yahoo Finance Crypto Screener Report - USD]"
-        full_message = alert_header + "".join(signals)
-        send_line_messaging_api(full_message)
-        print("Success! Notification sent to LINE.")
+    # -------------------------------------------------------------------------
+    # 3. ประมวลผลและจัดฟอร์แมตข้อความเพื่อส่งเข้า Telegram
+    # -------------------------------------------------------------------------
+    if total_coins > 0:
+        # คำนวณภาพรวมตลาดจากปริมาณเหรียญที่เป็นขาขึ้น (ยืนเหนือ EMA200 ได้มากกว่าครึ่งนึงไหม)
+        bullish_ratio = bullish_count / total_coins
+        if bullish_ratio >= 0.6:
+            market_overview = " Bullish (ขาขึ้นชัดเจน เหรียญส่วนใหญ่ยืนเหนือ EMA200)"
+        elif bullish_ratio <= 0.4:
+            market_overview = " Bearish (ขาลงรุนแรง เหรียญส่วนใหญ่อยู่ใต้ EMA200)"
+        else:
+            market_overview = " Sideways (เลือกทาง/ผสมผสาน ตลาดกำลังลังเล)"
+            
+        # สร้างโครงสร้างข้อความรายงาน
+        report_msg = "📊 <b>[Yahoo Finance Crypto Screener Report]</b>\n"
+        report_msg += f"<b>ภาพรวมตลาด:</b> {market_overview}\n"
+        report_msg += f"(เหรียญทรงขาขึ้น {bullish_count}/{total_coins} ตัว)\n"
+        report_msg += "=========================\n\n"
+        
+        # ส่วนที่ 1: สรุปรายเหรียญ
+        report_msg += "<b>🧐 สรุปแนวโน้มรายเหรียญ:</b>\n"
+        report_msg += "\n".join(coin_summaries) + "\n\n"
+        report_msg += "=========================\n"
+        
+        # ส่วนที่ 2: สัญญาณซื้อ/ขาย (ถ้ามี)
+        if signals:
+            report_msg += "⚡ <b>สัญญาณเทรดที่ตรวจพบในชั่วโมงนี้:</b>\n"
+            report_msg += "".join(signals)
+        else:
+            report_msg += "\nℹ️ <i>ในชั่วโมงนี้ไม่มีเหรียญใดเข้าเงื่อนไข RSI Buy/Sell</i>"
+            
+        # ส่งรายงานทั้งหมดเข้า Telegram (ส่งทีเดียวครบถ้วน)
+        send_telegram_message(report_msg)
+        print("Process complete: Summary report sent to Telegram.")
     else:
-        print("Process complete: No assets matched the criteria at this hour.")
+        print("Process complete: No data found to analyze.")
 
 if __name__ == "__main__":
     screen_crypto()
