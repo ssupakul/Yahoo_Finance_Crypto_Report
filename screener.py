@@ -38,8 +38,8 @@ TIER_CONFIG: dict[int, dict] = {
 # -------------------------------------------------------------------------
 CONFIG = {
     # --- RSI Thresholds ---
-    "rsi_oversold":            35,
-    "rsi_overbought":          65,
+    "rsi_oversold":            32,
+    "rsi_overbought":          70,
     "rsi_recovery_threshold":  45,
     "rsi_pullback_threshold":  55,
     "rsi_recovery_lookback":     5,
