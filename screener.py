@@ -17,9 +17,9 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # -------------------------------------------------------------------------
-# COIN TIERS & FIX PERCENTAGE TP CONFIGURATION
+# COIN TIERS & MULTI-TARGET PERCENTAGE TP CONFIGURATION
 # -------------------------------------------------------------------------
-# ปรับเปลี่ยนระบบ TP มาเป็น % ตามที่คุณกำหนด (8%, 12%, 18%)
+# ปรับระบบ TP เป็นแบบ 2 ระดับ (TP1 / TP2) แยกตาม Tier ตามที่คุณกำหนด
 COIN_TIERS: dict[str, int] = {
     "BTC-USD":   1, "ETH-USD":   1,
     "BNB-USD":   2, "SOL-USD":   2, "XRP-USD":  2,
@@ -28,9 +28,9 @@ COIN_TIERS: dict[str, int] = {
 }
 
 TIER_CONFIG: dict[int, dict] = {
-    1: {"fix_tp_pct": 0.08, "atr_sl_multiplier": 1.5, "label": "🏆 Tier 1 (Blue Chip) [TP +8%]"},
-    2: {"fix_tp_pct": 0.12, "atr_sl_multiplier": 1.5, "label": "🥈 Tier 2 (Mid-Cap) [TP +12%]"},
-    3: {"fix_tp_pct": 0.18, "atr_sl_multiplier": 1.0, "label": "🎲 Tier 3 (Small/Meme) [TP +18%]"},
+    1: {"tp1_pct": 0.08, "tp2_pct": 0.12, "atr_sl_multiplier": 1.5, "label": "🏆 Tier 1 (Blue Chip) [TP1+8% | TP2+12%]"},
+    2: {"tp1_pct": 0.15, "tp2_pct": 0.20, "atr_sl_multiplier": 1.5, "label": "🥈 Tier 2 (Mid-Cap) [TP1+15% | TP2+20%]"},
+    3: {"tp1_pct": 0.20, "tp2_pct": 0.30, "atr_sl_multiplier": 1.0, "label": "🎲 Tier 3 (Small/Meme) [TP1+20% | TP2+30%]"},
 }
 
 # -------------------------------------------------------------------------
@@ -51,7 +51,8 @@ CONFIG = {
     "lookback_skip_bars":       3,
 
     # --- Fallback (กรณีเหรียญนอกโผ) ---
-    "fix_tp_pct":              0.10,
+    "tp1_pct":                 0.10,
+    "tp2_pct":                 0.15,
     "atr_sl_multiplier":       1.5,
 
     # --- Trend Continuity ---
@@ -63,11 +64,11 @@ CONFIG = {
     "recovery_quality_mid":    40,   
 
     # --- Volume Filter ---
-    "vol_filter_ratio":       0.5,
+    "vol_filter_ratio":        0.5,
 
     # --- Indicators ---
     "ema_short":               50,
-    "ema_long":               200,
+    "ema_long":                200,
     "rsi_length":              14,
     "atr_length":              14,
 
@@ -254,15 +255,15 @@ def analyze_trend_continuity(df: pd.DataFrame) -> dict:
         elif ema50_now < ema_now:
             result["ema_cross_zone"] = "death"
 
-    up_score   = 0
+    up_score  = 0
     down_score = 0
 
     if result["ema_slope"] == "rising":   up_score   += 2
     if result["ema_slope"] == "falling":  down_score += 2
     if result["candle_streak"] >= streak_target:   up_score   += 1
     if result["candle_streak"] <= -streak_target:  down_score += 1
-    if result["ema_cross_zone"] == "golden":  up_score   += 1
-    if result["ema_cross_zone"] == "death":   down_score += 1
+    if result["ema_cross_zone"] == "golden":   up_score   += 1
+    if result["ema_cross_zone"] == "death":    down_score += 1
 
     result["is_trending_up"]   = up_score   >= 3
     result["is_trending_down"] = down_score >= 3
@@ -426,7 +427,7 @@ def detect_sell_mode(rsi_series: pd.Series) -> str | None:
     return None
 
 # -------------------------------------------------------------------------
-# SIGNAL BUILDER (UPDATED FOR FIX % TP)
+# SIGNAL BUILDER (UPDATED FOR MULTI-TARGET FIX % TP)
 # -------------------------------------------------------------------------
 _MODE_LABEL_BUY = {
     "crossunder": "🔔 RSI เพิ่งลงใต้ Oversold",
@@ -441,7 +442,7 @@ _MODE_LABEL_SELL = {
 
 def _get_tier_cfg(symbol: str) -> tuple[int, dict]:
     tier = COIN_TIERS.get(symbol, 2)
-    return tier, TIER_CONFIG.get(tier, {"fix_tp_pct": CONFIG["fix_tp_pct"], "atr_sl_multiplier": CONFIG["atr_sl_multiplier"], "label": f"🥈 Tier {tier} (Standard)"})
+    return tier, TIER_CONFIG.get(tier, {"tp1_pct": CONFIG["tp1_pct"], "tp2_pct": CONFIG["tp2_pct"], "atr_sl_multiplier": CONFIG["atr_sl_multiplier"], "label": f"🥈 Tier {tier} (Standard)"})
 
 def build_buy_signal(
     symbol: str,
@@ -454,12 +455,14 @@ def build_buy_signal(
     recovery_score: int,
 ) -> str:
     tier_num, tier_cfg = _get_tier_cfg(symbol)
-    tp_pct  = tier_cfg["fix_tp_pct"]
+    tp1_pct = tier_cfg["tp1_pct"]
+    tp2_pct = tier_cfg["tp2_pct"]
     sl_mult = tier_cfg["atr_sl_multiplier"]
     atr     = last["ATR"]
 
-    # คำนวณ Fix % TP สำหรับขา BUY (บวกเพิ่มขึ้นไปจากราคาปัจจุบัน)
-    tp_price  = last["close"] * (1.0 + tp_pct)
+    # คำนวณ Fix % TP 2 ระดับสำหรับขา BUY
+    tp1_price = last["close"] * (1.0 + tp1_pct)
+    tp2_price = last["close"] * (1.0 + tp2_pct)
     sl_price  = last["close"] - (atr * sl_mult)
     
     ema_short = last[f"EMA_{CONFIG['ema_short']}"]
@@ -487,7 +490,8 @@ def build_buy_signal(
     entry_low = fmt_price(last["close"] * 0.99)
     entry_hi  = fmt_price(last["close"])
     price_now = fmt_price(last["close"])
-    tp_fmt    = fmt_price(tp_price)
+    tp1_fmt   = fmt_price(tp1_price)
+    tp2_fmt   = fmt_price(tp2_price)
     sl_fmt    = fmt_price(sl_price)
 
     return escape_html(
@@ -497,7 +501,8 @@ def build_buy_signal(
         f"EMA50: {fmt_price(ema_short)} | EMA200: {fmt_price(ema_long)}\n"
         f"สถานะ: {context}\n"
         f"📍 ช่วงเข้าซื้อ: {entry_low} – {entry_hi}\n"
-        f"🎯 Take Profit (+{tp_pct*100:.0f}%): {tp_fmt}\n"
+        f"🎯 Take Profit 1 (+{tp1_pct*100:.0f}%): {tp1_fmt}\n"
+        f"🎯 Take Profit 2 (+{tp2_pct*100:.0f}%): {tp2_fmt}\n"
         f"❌ Stop Loss (ATR×{sl_mult}): {sl_fmt}\n"
         f"{'─'*32}"
     )
@@ -512,12 +517,14 @@ def build_sell_signal(
     trend: dict,
 ) -> str:
     tier_num, tier_cfg = _get_tier_cfg(symbol)
-    tp_pct  = tier_cfg["fix_tp_pct"]
+    tp1_pct = tier_cfg["tp1_pct"]
+    tp2_pct = tier_cfg["tp2_pct"]
     sl_mult = tier_cfg["atr_sl_multiplier"]
     atr     = last["ATR"]
 
-    # คำนวณ Fix % TP สำหรับขา SELL (ดิ่งลงมาเก็บของข้างล่าง)
-    tp_price  = last["close"] * (1.0 - tp_pct)
+    # คำนวณ Fix % TP 2 ระดับสำหรับขา SELL (ดิ่งลงมาเก็บของข้างล่าง)
+    tp1_price = last["close"] * (1.0 - tp1_pct)
+    tp2_price = last["close"] * (1.0 - tp2_pct)
     sl_price  = last["close"] + (atr * sl_mult)
     
     ema_short = last[f"EMA_{CONFIG['ema_short']}"]
@@ -543,7 +550,8 @@ def build_sell_signal(
     entry_low = fmt_price(last["close"])
     entry_hi  = fmt_price(last["close"] * 1.01)
     price_now = fmt_price(last["close"])
-    tp_fmt    = fmt_price(tp_price)
+    tp1_fmt   = fmt_price(tp1_price)
+    tp2_fmt   = fmt_price(tp2_price)
     sl_fmt    = fmt_price(sl_price)
 
     return escape_html(
@@ -553,7 +561,8 @@ def build_sell_signal(
         f"EMA50: {fmt_price(ema_short)} | EMA200: {fmt_price(ema_long)}\n"
         f"สถานะ: {context}\n"
         f"📍 โซนแบ่งขาย: {entry_low} – {entry_hi}\n"
-        f"🎯 รอรับกลับ (-{tp_pct*100:.0f}%): {tp_fmt}\n"
+        f"🎯 รอรับกลับ 1 (-{tp1_pct*100:.0f}%): {tp1_fmt}\n"
+        f"🎯 รอรับกลับ 2 (-{tp2_pct*100:.0f}%): {tp2_fmt}\n"
         f"❌ Trailing Stop (ATR×{sl_mult}): {sl_fmt}\n"
         f"{'─'*32}"
     )
@@ -688,13 +697,13 @@ def screen_crypto() -> None:
     else:
         market_overview = "↔️ ไซด์เวย์เลือกทาง (Sideways)"
 
-    # ปรับคำอธิบายท้ายรายงานสะท้อนเกณฑ์ % ใหม่ที่คุณกำหนดมา
+    # ปรับคำอธิบายท้ายรายงานให้สะท้อนแผนการแบ่ง TP สองระยะ
     tier_legend = (
-        "\n<i>🏆 Tier1 TP+8%  🥈 Tier2 TP+12%  🎲 Tier3 TP+18% (Fix Percentage)</i>"
+        "\n<i>🏆 Tier1 TP+8%/+12%  🥈 Tier2 TP+15%/+20%  🎲 Tier3 TP+20%/+30%</i>"
     )
 
     report = (
-        f"📊 <b>[Crypto Screener] ภาพรวมตลาด: {market_overview}</b>\n"
+        "📊 <b>[Crypto Screener] ภาพรวมตลาด: {}</b>\n".format(market_overview) +
         f"เหรียญขาขึ้น: {bullish_count}/{total_coins} "
         f"({bullish_ratio * 100:.0f}%)\n"
         f"{tier_legend}\n"
